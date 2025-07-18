@@ -13,7 +13,11 @@ import urllib.parse
 import random
 
 # 플레이스 스크래핑 관련 import
-from playwright.async_api import async_playwright, TimeoutError
+try:
+    from playwright.async_api import async_playwright, TimeoutError
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
 
 app = FastAPI(
     title="네이버 지도 통합 분석 API",
@@ -33,6 +37,12 @@ app.add_middleware(
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Playwright 가용성 로깅
+if PLAYWRIGHT_AVAILABLE:
+    logger.info("Playwright 라이브러리 로드 성공")
+else:
+    logger.warning("Playwright 라이브러리를 찾을 수 없습니다. 스크래핑 기능이 제한됩니다.")
 
 # 진행 중인 작업 저장소
 active_jobs: Dict[str, Dict[str, Any]] = {}
@@ -124,7 +134,10 @@ async def health_check():
         "status": "healthy",
         "active_jobs": len(active_jobs),
         "message": "통합 API 서버가 정상적으로 실행 중입니다",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "version": "3.0.0",
+        "playwright_available": PLAYWRIGHT_AVAILABLE,
+        "scraping_mode": "실제 스크래핑" if PLAYWRIGHT_AVAILABLE else "샘플 데이터"
     }
 
 @app.post("/api/analyze-place", response_model=PlaceAnalysisResult)
@@ -596,6 +609,11 @@ async def scrape_naver_place_info(url: str) -> Dict[str, Any]:
     실제 네이버 플레이스 정보 스크래핑
     기존 scrape_naver_place 함수를 API용으로 수정
     """
+    if not PLAYWRIGHT_AVAILABLE:
+        logger.warning("Playwright가 설치되지 않아 샘플 데이터를 반환합니다")
+        business_name = extract_business_name_from_url(url) or "스크래핑 대상 업체"
+        return generate_sample_place_analysis(business_name).dict()
+    
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
@@ -690,4 +708,9 @@ async def get_list_items_as_text(frame, list_selector, default="정보 없음"):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    host = os.environ.get("HOST", "0.0.0.0")
+    
+    logger.info(f"서버 시작: {host}:{port}")
+    logger.info("네이버 지도 통합 분석 API v3.0 시작")
+    
+    uvicorn.run(app, host=host, port=port, log_level="info")
